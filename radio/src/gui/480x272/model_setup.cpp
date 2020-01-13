@@ -26,6 +26,14 @@
 #define SET_DIRTY()     storageDirty(EE_MODEL)
 #define STR_4BIND(v)    ((moduleFlag[moduleIndex] == MODULE_BIND) ? STR_MODULE_BINDING : (v))
 
+void moduleFlagBackNormal(uint8_t moduleIndex)
+{
+  if (moduleFlag[moduleIndex] != MODULE_NORMAL_MODE) {
+    moduleFlag[moduleIndex] = MODULE_NORMAL_MODE;
+    if(isModuleFlysky(moduleIndex)) resetPulsesFlySky(moduleIndex);
+  }
+}
+
 void resetModuleSettings(uint8_t module)
 {
   g_model.moduleData[module].channelsStart = 0;
@@ -34,8 +42,7 @@ void resetModuleSettings(uint8_t module)
   if (isModulePPM(module)) {
     SET_DEFAULT_PPM_FRAME_LENGTH(EXTERNAL_MODULE);
   }
-  setModuleFlag(module, MODULE_RESET_SETTINGS);
-  setModuleFlag(module, MODULE_NORMAL_MODE);
+  moduleFlagBackNormal(module);
 }
 
 class ChannelFailsafeBargraph: public Window {
@@ -284,30 +291,17 @@ class ModuleWindow : public Window {
       }
       grid.nextLine();
       // Module parameters
-      if (isModuleFlysky(moduleIndex) || isModuleAFHDS3(moduleIndex)) {
+      if (isModuleFlysky(moduleIndex)) {
         new Choice(this, grid.getFieldSlot(), STR_FLYSKY_PROTOCOLS, 0, 3,
-                   GET_DEFAULT(isModuleFlysky(moduleIndex) ? g_model.moduleData[moduleIndex].romData.mode : g_model.moduleData[moduleIndex].afhds3.mode),
+                   GET_DEFAULT(g_model.moduleData[moduleIndex].romData.mode),
                    [=](int32_t newValue) -> void {
-                     if(isModuleFlysky(moduleIndex)) g_model.moduleData[moduleIndex].romData.mode = newValue;
-                     else g_model.moduleData[moduleIndex].afhds3.mode = newValue;
+                     g_model.moduleData[moduleIndex].romData.mode = newValue;
                      SET_DIRTY();
-                     setModuleFlag(moduleIndex, MODULE_NORMAL_MODE);
+                     moduleFlagBackNormal(moduleIndex);
                      setFlyskyState(moduleIndex, STATE_SET_RX_PWM_PPM);
                    });
-        
-      }
-#if defined(AFHDS3)
-      if(isModuleAFHDS3(moduleIndex)){
         grid.nextLine();
-        new StaticText(this, grid.getLabelSlot(true), STR_MODULE_STATUS);
-        StaticText* status = new StaticText(this, grid.getFieldSlot());
-        status->setCheckHandler([=]() {
-          if(!status->isTextEqual(afhds3uart.getState())) {
-            status->setText(std::string(afhds3uart.getState()));
-          }
-        });
       }
-#endif
 #if defined(MULTIMODULE)
       if (isModuleMultimodule(moduleIndex)) {
         grid.nextLine();
@@ -506,16 +500,11 @@ class ModuleWindow : public Window {
                          g_model.moduleData[moduleIndex].romData.rx_freq[0] = newValue & 0xFF;
                          g_model.moduleData[moduleIndex].romData.rx_freq[1] = newValue >> 8;
                          SET_DIRTY();
-                         setModuleFlag(moduleIndex, MODULE_NORMAL_MODE);
+                         moduleFlagBackNormal(moduleIndex);
                          setFlyskyState(moduleIndex, STATE_SET_RX_FREQUENCY);
                        });
         grid.nextLine();
       }
-      if (isModuleAFHDS3(moduleIndex)) {
-             new StaticText(this, grid.getLabelSlot(true), STR_RXFREQUENCY);
-             new NumberEdit(this, grid.getFieldSlot(), 50, 400, GET_SET_DEFAULT(g_model.moduleData[moduleIndex].afhds3.rxFreq));
-             grid.nextLine();
-           }
 
       // Failsafe
       if (isModuleNeedingFailsafeButton(moduleIndex)) {
@@ -527,11 +516,11 @@ class ModuleWindow : public Window {
                                       SET_DIRTY();
                                       update();
                                       failSafeChoice->setFocus();
-                                      setModuleFlag(moduleIndex, MODULE_NORMAL_MODE);
+                                      moduleFlagBackNormal(moduleIndex);
                                       SEND_FAILSAFE_NOW(moduleIndex);
                                     });
         failSafeChoice->setAvailableHandler([=](int8_t newValue) {
-          if(isModuleFlysky(moduleIndex) || isModuleAFHDS3(moduleIndex)){
+          if(isModuleFlysky(moduleIndex)){
             failSafeChoice->setAvailableHandler([=](int8_t newValue) {
                 return newValue != FAILSAFE_RECEIVER;
             });
@@ -557,7 +546,7 @@ class ModuleWindow : public Window {
           }
           if (moduleFlag[moduleIndex] == MODULE_BIND) {
             bindButton->setText(STR_MODULE_BIND);
-            setModuleFlag(moduleIndex, MODULE_NORMAL_MODE);
+            moduleFlag[moduleIndex] = MODULE_NORMAL_MODE;
             if (isModuleFlysky(moduleIndex)) resetPulsesFlySky(moduleIndex);
             return 0;
           }
@@ -569,7 +558,7 @@ class ModuleWindow : public Window {
                   menu->setSelectHandler([=](const char* selected) {
                     onBindMenu(selected, moduleIndex);
                     bindButton->setText(STR_MODULE_BINDING);
-                    setModuleFlag(moduleIndex, MODULE_BIND);
+                    moduleFlag[moduleIndex] = MODULE_BIND;
                   });
                   if (isModuleR9M_LBT(moduleIndex)) {
                       menu->addLine(STR_BINDING_25MW_CH1_8_TELEM_OFF);
@@ -593,7 +582,7 @@ class ModuleWindow : public Window {
             }
             else {
               bindButton->setText(STR_MODULE_BINDING);
-              setModuleFlag(moduleIndex, MODULE_BIND);
+              moduleFlag[moduleIndex] = MODULE_BIND;
 #if defined(MULTIMODULE)
               //why not use moduleFlag directly
               multiBindStatus = MULTI_BIND_INITIATED;
@@ -610,7 +599,7 @@ class ModuleWindow : public Window {
 #if defined(MULTIMODULE)
           if (multiBindStatus == MULTI_BIND_FINISHED) {
             multiBindStatus = MULTI_NORMAL_OPERATION;
-            setModuleFlag(moduleIndex, MODULE_NORMAL_MODE);
+            moduleFlag[moduleIndex] = MODULE_NORMAL_MODE;
           }
 #endif
           if (moduleFlag[moduleIndex] != MODULE_BIND) {
@@ -625,11 +614,11 @@ class ModuleWindow : public Window {
             bindButton->check(false);
           }
           if (moduleFlag[moduleIndex] != MODULE_RANGECHECK) {
-            setModuleFlag(moduleIndex, MODULE_RANGECHECK);
+            moduleFlag[moduleIndex] = MODULE_RANGECHECK;
             if(isModuleFlysky(moduleIndex)) resetPulsesFlySky(moduleIndex);
             MessageBox* mb = new MessageBox(WARNING_TYPE_INFO, DialogResult::Cancel, "Range check", "",
               [=](DialogResult result) {
-                setModuleFlag(moduleIndex, MODULE_NORMAL_MODE);
+                moduleFlag[moduleIndex] = MODULE_NORMAL_MODE;
                 rangeButton->check(false);
               }
             );
@@ -645,7 +634,7 @@ class ModuleWindow : public Window {
             return 1;
           }
           else {
-            setModuleFlag(moduleIndex, MODULE_NORMAL_MODE);
+            moduleFlag[moduleIndex] = MODULE_NORMAL_MODE;
             return 0;
           }
         });
@@ -682,22 +671,6 @@ class ModuleWindow : public Window {
                              });
       }
 #endif
-      if (isModuleAFHDS3(moduleIndex)) {
-        new StaticText(this, grid.getLabelSlot(true), STR_MULTI_RFPOWER);
-        new Choice(this, grid.getFieldSlot(), "\007 15 dBm 20 dBm 27 dBm 30 dBm 33 dBm", 0,
-            afhds3::RUN_POWER::PLUS_33dBm, GET_SET_DEFAULT(g_model.moduleData[moduleIndex].afhds3.runPower));
-        grid.nextLine();
-        new StaticText(this, grid.getLabelSlot(true), "Bind Power");
-        new Choice(this, grid.getFieldSlot(), "\007-16 dBm -5 dBm  0 dBm  5 dBm 16 dBm", 0,
-            afhds3::BIND_POWER::PLUS_14dBm, GET_SET_DEFAULT(g_model.moduleData[moduleIndex].afhds3.bindPower));
-        grid.nextLine();
-        new StaticText(this, grid.getLabelSlot(true), "EMI Standard");
-        new Choice(this, grid.getFieldSlot(), "\003FCC CE", 0, afhds3::EMI_STANDARD::CE, GET_SET_DEFAULT(g_model.moduleData[moduleIndex].afhds3.emi));
-        grid.nextLine();
-        new StaticText(this, grid.getLabelSlot(true), "Telemetry");
-        new CheckBox(this, grid.getFieldSlot(), GET_SET_DEFAULT(g_model.moduleData[moduleIndex].afhds3.telemetry));
-        grid.nextLine();
-      }
 #if defined (CROSSFIRE_NATIVE)
       if(isModuleCrossfire(moduleIndex)){
           new TextButton(this, grid.getFieldSlot(), STR_CROSSFIRE_SETUP, [=]() -> uint8_t {
